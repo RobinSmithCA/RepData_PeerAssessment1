@@ -2,19 +2,83 @@
 
 
 ## Loading and preprocessing the data
+```{r}
+library( "sqldf" )
+library( "lattice" )
+library( "chron" )
 
+# unzip the data and read it in
+unzip( "activity.zip", exdir = "." )
+data <- read.csv( "activity.csv" )
+
+# Do all the data wranging now
+# Start by Calculate the total steps by day
+daySum <- sqldf( "select date, SUM(steps) as steps from data group by date" )
+
+# then Calculate the average steps by interval
+intervalAvg <- sqldf( "select interval, AVG(steps) as steps from data group by interval" )
+```
 
 
 ## What is mean total number of steps taken per day?
-
+```{r fig.width=11}
+barchart(  steps ~ date, data = daySum, main = "Total steps per day", ylab = "Total Steps",
+           scales = list( x = list( rot = 45 ), cex = c( .6, 1 ) ), panel = function( x, y, ... ) {
+   panel.barchart( x, y, ... )
+   panel.abline( h = median( y, na.rm = TRUE ), lty = 2, col = "red" )
+   panel.abline( h = mean( y, na.rm = TRUE ), lty = 2, col = "blue" )
+} )
+```
+The mean total number of steps taken per day is `r sprintf( "%.0f", mean( daySum$steps, na.rm = TRUE ) )`.  
+The median total number of steps taken per day is `r median( daySum$steps, na.rm = TRUE )`.  
 
 
 ## What is the average daily activity pattern?
-
-
+```{r}
+xyplot( steps ~ interval, data = intervalAvg, type = "l", main = "Average Steps per interval", ylab = "Average Steps" )
+```
+On average the maximum steps occurred during interval `r intervalAvg[ intervalAvg$steps == max( intervalAvg$steps ), 1 ]`
 
 ## Imputing missing values
+There are `r sum(is.na( data$steps ) )` missing values in the original dataset.  
 
+```{r}
+# Merge the NA rows w/the interval averages and keep just the new step counts, then fix up the column names so they'll match
+naFix <- merge( data[ is.na( data$steps ), ], intervalAvg, by = "interval" )[,c( "steps.y", "date","interval" ) ]
+names( naFix ) <- c( "steps", "date", "interval" )
+
+# Bind the non-NA rows w/the NA rows where the NA value is the mean for that interval
+fixedData <- rbind( data[ !is.na( data$steps ), ], naFix )
+
+# resort the data back to it's data/interval order
+fixedData <- fixedData[ order( fixedData$date, fixedData$interval ), ]
+
+# Get the Totals Steps by Day for the fixed dataset
+fixedDaySum <- sqldf( "select date, SUM(steps) as steps from fixedData group by date" )
+```
+
+There are `r sum(is.na( fixedData$steps ) )` missing values in the fixed dataset.  
+
+```{r, fig.width=11}
+barchart(  steps ~ date, data = fixedDaySum, main = "Total steps per day (Fixed)", ylab = "Total Steps",
+           scales = list( x = list( rot = 45 ), cex = c( .6, 1 ) ), panel = function( x, y, ... ) {
+   panel.barchart( x, y, ... )
+   panel.abline( h = median( y, na.rm = TRUE ), lty = 2, col = "red" )
+   panel.abline( h = mean( y, na.rm = TRUE ), lty = 2, col = "blue" )
+} )
+```
+The mean total number of steps taken per day is `r sprintf( "%.0f", mean( fixedDaySum$steps ) )`.  
+The median total number of steps taken per day is `r median( fixedDaySum$steps )`.  
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+```{r}
+# We need to figure out weekday vs weekend, so convert the date column to POSIX and test
+fixedData$typeOfDay = is.weekend( as.POSIXct( fixedData$date, format = "%Y-%m-%d" ) )
+fixedData$typeOfDay[ fixedData$typeOfDay == TRUE ] <- "weekend"
+fixedData$typeOfDay[ fixedData$typeOfDay == FALSE ] <- "weekday"
+fixedIntervalAvg <- sqldf( "select typeOfDay, interval, AVG(steps) as steps from fixedData group by typeOfDay, interval" )
+
+xyplot( steps ~ interval | typeOfDay, data = fixedIntervalAvg, type = "l", main = "Average Steps per interval - Weekday vs Weekend", ylab = "Average Steps" )
+```
+
